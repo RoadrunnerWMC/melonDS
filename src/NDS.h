@@ -19,8 +19,16 @@
 #ifndef NDS_H
 #define NDS_H
 
+#include <unordered_set>
+
 #include "Savestate.h"
 #include "types.h"
+
+extern "C" {
+    #include "lua5.3/lua.h"
+    #include "lua5.3/lauxlib.h"
+    #include "lua5.3/lualib.h"
+}
 
 // when touching the main loop/timing code, pls test a lot of shit
 // with this enabled, to make sure it doesn't desync
@@ -124,6 +132,11 @@ extern u8 ARM7BIOS[0x4000];
 
 extern u8 MainRAM[MAIN_RAM_SIZE];
 
+extern lua_State *luaState;
+extern std::unordered_set<u32> luaInstBreakpoints;
+extern std::unordered_set<u32> luaReadWatchpoints;
+extern std::unordered_set<u32> luaWriteWatchpoints;
+
 bool Init();
 void DeInit();
 void Reset();
@@ -211,6 +224,16 @@ u32 ARM7IORead32(u32 addr);
 void ARM7IOWrite8(u32 addr, u8 val);
 void ARM7IOWrite16(u32 addr, u16 val);
 void ARM7IOWrite32(u32 addr, u32 val);
+
+void PushLuaCpuTables(lua_State* state);
+void HandleInstructionRun(int whichCpu);
+int luaCallback_register_breakpoint(lua_State* state);
+int luaCallback_register_read_watchpoint(lua_State* state);
+int luaCallback_register_write_watchpoint(lua_State* state);
+int luaCallback_read_memory(lua_State* state);
+int luaCallback_write_memory(lua_State* state);
+int luaCallback_read_c_string(lua_State* state);
+int luaCallback_dump_memory_to(lua_State* state);
 
 }
 

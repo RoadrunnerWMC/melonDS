@@ -39,6 +39,39 @@ SET(SOURCES
 	src/libui_sdl/libui/common/matrix.c
 	src/libui_sdl/libui/common/shouldquit.c
 	src/libui_sdl/libui/common/userbugs.c
+    src/lua5.3/src/lapi.c
+    src/lua5.3/src/lauxlib.c
+    src/lua5.3/src/lbaselib.c
+    src/lua5.3/src/lbitlib.c
+    src/lua5.3/src/lcode.c
+    src/lua5.3/src/lcorolib.c
+    src/lua5.3/src/lctype.c
+    src/lua5.3/src/ldblib.c
+    src/lua5.3/src/ldebug.c
+    src/lua5.3/src/ldo.c
+    src/lua5.3/src/ldump.c
+    src/lua5.3/src/lfunc.c
+    src/lua5.3/src/lgc.c
+    src/lua5.3/src/linit.c
+    src/lua5.3/src/liolib.c
+    src/lua5.3/src/llex.c
+    src/lua5.3/src/lmathlib.c
+    src/lua5.3/src/lmem.c
+    src/lua5.3/src/loadlib.c
+    src/lua5.3/src/lobject.c
+    src/lua5.3/src/lopcodes.c
+    src/lua5.3/src/loslib.c
+    src/lua5.3/src/lparser.c
+    src/lua5.3/src/lstate.c
+    src/lua5.3/src/lstring.c
+    src/lua5.3/src/lstrlib.c
+    src/lua5.3/src/ltable.c
+    src/lua5.3/src/ltablib.c
+    src/lua5.3/src/ltm.c
+    src/lua5.3/src/lundump.c
+    src/lua5.3/src/lutf8lib.c
+    src/lua5.3/src/lvm.c
+    src/lua5.3/src/lzio.c
 )
 
 if (UNIX)

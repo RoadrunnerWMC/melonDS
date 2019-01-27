@@ -471,6 +471,8 @@ void ARMv5::Execute()
 
     while (NDS::ARM9Timestamp < NDS::ARM9Target)
     {
+        NDS::HandleInstructionRun(9);
+
         if (CPSR & 0x20) // THUMB
         {
             // prefetch
@@ -552,6 +554,8 @@ void ARMv4::Execute()
 
     while (NDS::ARM7Timestamp < NDS::ARM7Target)
     {
+        NDS::HandleInstructionRun(7);
+
         if (CPSR & 0x20) // THUMB
         {
             // prefetch

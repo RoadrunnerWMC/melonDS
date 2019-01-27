@@ -144,6 +144,11 @@ u16 RCnt;
 
 bool Running;
 
+lua_State *luaState;
+std::unordered_set<u32> luaInstBreakpoints;
+std::unordered_set<u32> luaReadWatchpoints;
+std::unordered_set<u32> luaWriteWatchpoints;
+
 
 void DivDone(u32 param);
 void SqrtDone(u32 param);
@@ -497,6 +502,32 @@ void Reset()
     SPI::Reset();
     RTC::Reset();
     Wifi::Reset();
+
+    luaInstBreakpoints.clear();
+
+    luaState = luaL_newstate();
+
+    lua_register(luaState, "register_breakpoint", luaCallback_register_breakpoint);
+    lua_register(luaState, "register_read_watchpoint", luaCallback_register_read_watchpoint);
+    lua_register(luaState, "register_write_watchpoint", luaCallback_register_write_watchpoint);
+
+    lua_register(luaState, "read_memory", luaCallback_read_memory);
+    lua_register(luaState, "write_memory", luaCallback_write_memory);
+    lua_register(luaState, "dump_memory_to", luaCallback_dump_memory_to);
+
+    int luaResult = luaL_loadfile(luaState, "../script.lua");
+    if (luaResult != LUA_OK) {
+        printf("Error loading Lua file: %s\n", lua_tostring(luaState, -1));
+        luaState = NULL;
+    }
+    else {
+        luaL_openlibs(luaState);
+        int pcallResult = lua_pcall(luaState, 0, 0, 0);
+        if (pcallResult != LUA_OK) {
+            printf("Error running Lua file: %s\n", lua_tostring(luaState, -1));
+            luaState = NULL;
+        }
+    }
 }
 
 void Stop()
@@ -1549,7 +1580,7 @@ void debug(u32 param)
 
 
 
-u8 ARM9Read8(u32 addr)
+u8 ARM9Read8_actual(u32 addr)
 {
     if ((addr & 0xFFFFF000) == 0xFFFF0000)
     {
@@ -1610,7 +1641,7 @@ u8 ARM9Read8(u32 addr)
     return 0;
 }
 
-u16 ARM9Read16(u32 addr)
+u16 ARM9Read16_actual(u32 addr)
 {
     if ((addr & 0xFFFFF000) == 0xFFFF0000)
     {
@@ -1671,7 +1702,7 @@ u16 ARM9Read16(u32 addr)
     return 0;
 }
 
-u32 ARM9Read32(u32 addr)
+u32 ARM9Read32_actual(u32 addr)
 {
     if ((addr & 0xFFFFF000) == 0xFFFF0000)
     {
@@ -1732,7 +1763,52 @@ u32 ARM9Read32(u32 addr)
     return 0;
 }
 
-void ARM9Write8(u32 addr, u8 val)
+u32 LuaReadHandler(u32 whichCpu, u32 size, u32 addr, u32 value)
+{
+    if (luaState != NULL && luaReadWatchpoints.find(addr) != luaReadWatchpoints.end()) {
+        lua_getglobal(luaState, "handle_memory_read");
+
+        if (!lua_isfunction(luaState, lua_gettop(luaState))) {
+            // Function not found
+            lua_pop(luaState, 1);
+        }
+        else {
+
+            // Push the first two arguments: "arm9" and "arm7"
+            PushLuaCpuTables(luaState);
+
+            // Also push "whichCpu", "size," "addr", and "value"
+            lua_pushinteger(luaState, whichCpu);
+            lua_pushinteger(luaState, size);
+            lua_pushinteger(luaState, addr);
+            lua_pushinteger(luaState, value);
+
+            // Do the call (6 arguments, 1 result)
+            if (lua_pcall(luaState, 6, 1, 0) != 0)
+                printf("Error running handle_memory_read(): %s\n", lua_tostring(luaState, -1));
+
+            value = lua_tointeger(luaState, lua_gettop(luaState));
+        }
+    }
+    return value;
+}
+
+u8 ARM9Read8(u32 addr)
+{
+    return LuaReadHandler(9, 8, addr, ARM9Read8_actual(addr));
+}
+
+u16 ARM9Read16(u32 addr)
+{
+    return LuaReadHandler(9, 16, addr, ARM9Read16_actual(addr));
+}
+
+u32 ARM9Read32(u32 addr)
+{
+    return LuaReadHandler(9, 32, addr, ARM9Read32_actual(addr));
+}
+
+void ARM9Write8_actual(u32 addr, u8 val)
 {
     switch (addr & 0xFF000000)
     {
@@ -1761,7 +1837,7 @@ void ARM9Write8(u32 addr, u8 val)
     printf("unknown arm9 write8 %08X %02X\n", addr, val);
 }
 
-void ARM9Write16(u32 addr, u16 val)
+void ARM9Write16_actual(u32 addr, u16 val)
 {
     switch (addr & 0xFF000000)
     {
@@ -1804,7 +1880,7 @@ void ARM9Write16(u32 addr, u16 val)
     //printf("unknown arm9 write16 %08X %04X\n", addr, val);
 }
 
-void ARM9Write32(u32 addr, u32 val)
+void ARM9Write32_actual(u32 addr, u32 val)
 {
     switch (addr & 0xFF000000)
     {
@@ -1847,6 +1923,51 @@ void ARM9Write32(u32 addr, u32 val)
     printf("unknown arm9 write32 %08X %08X | %08X\n", addr, val, ARM9->R[15]);
 }
 
+u32 LuaWriteHandler(u32 whichCpu, u32 size, u32 addr, u32 value)
+{
+    if (luaState != NULL && luaWriteWatchpoints.find(addr) != luaReadWatchpoints.end()) {
+        lua_getglobal(luaState, "handle_memory_write");
+
+        if (!lua_isfunction(luaState, lua_gettop(luaState))) {
+            // Function not found
+            lua_pop(luaState, 1);
+        }
+        else {
+
+            // Push the first two arguments: "arm9" and "arm7"
+            PushLuaCpuTables(luaState);
+
+            // Also push "whichCpu", "size," "addr", and "value"
+            lua_pushinteger(luaState, whichCpu);
+            lua_pushinteger(luaState, size);
+            lua_pushinteger(luaState, addr);
+            lua_pushinteger(luaState, value);
+
+            // Do the call (6 arguments, 1 result)
+            if (lua_pcall(luaState, 6, 1, 0) != 0)
+                printf("Error running handle_memory_write(): %s\n", lua_tostring(luaState, -1));
+
+            value = lua_tointeger(luaState, lua_gettop(luaState));
+        }
+    }
+    return value;
+}
+
+void ARM9Write8(u32 addr, u8 val)
+{
+    ARM9Write8_actual(addr, LuaWriteHandler(9, 8, addr, val));
+}
+
+void ARM9Write16(u32 addr, u16 val)
+{
+    ARM9Write16_actual(addr, LuaWriteHandler(9, 16, addr, val));
+}
+
+void ARM9Write32(u32 addr, u32 val)
+{
+    ARM9Write32_actual(addr, LuaWriteHandler(9, 32, addr, val));
+}
+
 bool ARM9GetMemRegion(u32 addr, bool write, MemRegion* region)
 {
     switch (addr & 0xFF000000)
@@ -1879,7 +2000,7 @@ bool ARM9GetMemRegion(u32 addr, bool write, MemRegion* region)
 
 
 
-u8 ARM7Read8(u32 addr)
+u8 ARM7Read8_actual(u32 addr)
 {
     if (addr < 0x00004000)
     {
@@ -1935,7 +2056,7 @@ u8 ARM7Read8(u32 addr)
     return 0;
 }
 
-u16 ARM7Read16(u32 addr)
+u16 ARM7Read16_actual(u32 addr)
 {
     if (addr < 0x00004000)
     {
@@ -1998,7 +2119,7 @@ u16 ARM7Read16(u32 addr)
     return 0;
 }
 
-u32 ARM7Read32(u32 addr)
+u32 ARM7Read32_actual(u32 addr)
 {
     if (addr < 0x00004000)
     {
@@ -2061,7 +2182,22 @@ u32 ARM7Read32(u32 addr)
     return 0;
 }
 
-void ARM7Write8(u32 addr, u8 val)
+u8 ARM7Read8(u32 addr)
+{
+    return LuaReadHandler(7, 8, addr, ARM7Read8_actual(addr));
+}
+
+u16 ARM7Read16(u32 addr)
+{
+    return LuaReadHandler(7, 16, addr, ARM7Read16_actual(addr));
+}
+
+u32 ARM7Read32(u32 addr)
+{
+    return LuaReadHandler(7, 32, addr, ARM7Read32_actual(addr));
+}
+
+void ARM7Write8_actual(u32 addr, u8 val)
 {
     switch (addr & 0xFF800000)
     {
@@ -2099,7 +2235,7 @@ void ARM7Write8(u32 addr, u8 val)
     printf("unknown arm7 write8 %08X %02X @ %08X\n", addr, val, ARM7->R[15]);
 }
 
-void ARM7Write16(u32 addr, u16 val)
+void ARM7Write16_actual(u32 addr, u16 val)
 {
     switch (addr & 0xFF800000)
     {
@@ -2145,7 +2281,7 @@ void ARM7Write16(u32 addr, u16 val)
     //printf("unknown arm7 write16 %08X %04X @ %08X\n", addr, val, ARM7->R[15]);
 }
 
-void ARM7Write32(u32 addr, u32 val)
+void ARM7Write32_actual(u32 addr, u32 val)
 {
     switch (addr & 0xFF800000)
     {
@@ -2190,6 +2326,21 @@ void ARM7Write32(u32 addr, u32 val)
     }
 
     //printf("unknown arm7 write32 %08X %08X @ %08X\n", addr, val, ARM7->R[15]);
+}
+
+void ARM7Write8(u32 addr, u8 val)
+{
+    ARM7Write8_actual(addr, LuaWriteHandler(7, 8, addr, val));
+}
+
+void ARM7Write16(u32 addr, u16 val)
+{
+    ARM7Write16_actual(addr, LuaWriteHandler(7, 16, addr, val));
+}
+
+void ARM7Write32(u32 addr, u32 val)
+{
+    ARM7Write32_actual(addr, LuaWriteHandler(7, 32, addr, val));
 }
 
 bool ARM7GetMemRegion(u32 addr, bool write, MemRegion* region)
@@ -3463,6 +3614,122 @@ void ARM7IOWrite32(u32 addr, u32 val)
     }
 
     printf("unknown ARM7 IO write32 %08X %08X %08X\n", addr, val, ARM7->R[15]);
+}
+
+void PushLuaCpuTables(lua_State* state) {
+    for (int ncpu = 0; ncpu < 2; ncpu++)
+    {
+        ARM* cpu = ncpu ? (ARM*)ARM7 : (ARM*)ARM9;
+
+        // Create the CPU table
+        lua_newtable(state);
+        int cpuTableIndex = lua_gettop(state);
+
+        // cpu->Reg
+        lua_pushstring(state, "Reg");
+        lua_newtable(state);
+        int regTableIndex = lua_gettop(state);
+        for (int i = 0; i < 16; i++)
+        {
+            lua_pushinteger(state, cpu->R[i]);
+            lua_rawseti(state, regTableIndex, i + 1);
+        }
+        lua_rawset(state, cpuTableIndex);
+
+        // cpu->Cpsr
+        lua_pushstring(state, "Cpsr");
+        lua_pushinteger(state, cpu->CPSR);
+        lua_rawset(state, cpuTableIndex);
+    }
+}
+
+void HandleInstructionRun(int whichCpu)
+{
+    ARM* cpu = (whichCpu == 7) ? (ARM*)ARM7 : (ARM*)ARM9;
+    bool isThumb = ((cpu->CPSR & 0x20) == 0x20);
+    int instLen = isThumb ? 2 : 4;
+    u32 addr = cpu->R[15] - instLen;
+
+    if (luaState != NULL && luaInstBreakpoints.find(addr) != luaInstBreakpoints.end()) {
+        lua_getglobal(luaState, "handle_instruction_run");
+
+        if (!lua_isfunction(luaState, lua_gettop(luaState))) {
+            // Function not found
+            lua_pop(luaState, 1);
+        }
+        else {
+
+            // Push the first two arguments: "arm9" and "arm7"
+            PushLuaCpuTables(luaState);
+
+            // Also push "whichCpu"
+            lua_pushinteger(luaState, whichCpu);
+
+            // Do the call (3 arguments, 0 results)
+            if (lua_pcall(luaState, 3, 0, 0) != 0)
+                printf("Error running handle_instruction_run(): %s\n", lua_tostring(luaState, -1));
+        }
+    }
+}
+
+int luaCallback_register_breakpoint(lua_State* state)
+{
+    int address = lua_tointeger(state, 1);
+    luaInstBreakpoints.insert(address);
+    return 0; // number of return values from this function
+}
+
+int luaCallback_register_read_watchpoint(lua_State* state)
+{
+    int address = lua_tointeger(state, 1);
+    luaReadWatchpoints.insert(address);
+    return 0; // number of return values from this function
+}
+
+int luaCallback_register_write_watchpoint(lua_State* state)
+{
+    int address = lua_tointeger(state, 1);
+    luaWriteWatchpoints.insert(address);
+    return 0; // number of return values from this function
+}
+
+int luaCallback_read_memory(lua_State* state)
+{
+    int size = lua_tointeger(state, 1);
+    int address = lua_tointeger(state, 2);
+
+    if (size == 8)
+        lua_pushinteger(state, ARM9Read8(address));
+    else if (size == 16)
+        lua_pushinteger(state, ARM9Read16(address));
+    else if (size == 32)
+        lua_pushinteger(state, ARM9Read32(address));
+    else
+        lua_pushinteger(state, 0);
+
+    return 1; // number of return values from this function
+}
+
+int luaCallback_write_memory(lua_State* state)
+{
+    int size = lua_tointeger(state, 1);
+    int address = lua_tointeger(state, 2);
+    int value = lua_tointeger(state, 3);
+
+    if (size == 8)
+        ARM9Write8(address, value);
+    else if (size == 16)
+        ARM9Write16(address, value);
+    else if (size == 32)
+        ARM9Write32(address, value);
+
+    return 0; // number of return values from this function
+}
+
+int luaCallback_dump_memory_to(lua_State* state) {
+    const char* filename = lua_tostring(state, 1);
+    // Memory::DumpMemoryToFile(filename);
+    return 0; // number of return values from this function
 }
 
 }
